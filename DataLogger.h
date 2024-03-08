@@ -11,15 +11,13 @@ class DataLogger
         void setMaxLogs(uint8_t max_log);
         uint8_t getMaxLogs();
         std::tuple<bool, uint8_t, uint8_t> logData(uint16_t data1, uint16_t data2);
-        //virtual ~data_logger();
 
     protected:
 
     private:
       uint8_t max_log_count;
       uint8_t log_count;
-      uint8_t data_total[2];
-      // uint16_t data_range[2][2] = {{1385, 2885}, {0, 3462}};
+      float data_total[2];
 };
 
 #endif // DATA_LOGGER_H

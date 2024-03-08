@@ -15,13 +15,17 @@ DataManager::DataManager() {
   //init funct
 }
 
-// Connect to firebase. 0 - no credentials | 1 - successfull connecion | 2 - incorrect credentials
+
+/**
+ * Connect to firebase.
+ *
+ * @return 0 - no credentials | 1 - successfull connecion | 2 - incorrect credentials
+ */
 uint8_t DataManager::connectToFirebase() {
   config.api_key = API_KEY;
   config.database_url = FIREBASE_URL;
 
   if (Firebase.signUp(&config, &auth, "", "")) {
-    //config.token_status_callback = TokenStatusCallback;
     config.token_status_callback = tokenStatusCallback;
     fbdo.setBSSLBufferSize(4096 /* Rx buffer size in bytes from 512 - 16384 */, 1024 /* Tx buffer size in bytes from 512 - 16384 */);
     fbdo.setResponseSize(2048);
@@ -38,6 +42,12 @@ uint8_t DataManager::connectToFirebase() {
   }
 }
 
+
+/**
+ * Return the soil moisture target
+ *
+ * @return soil moisture target
+ */
 int DataManager::getSoilTarget() {
   dat_preferences.begin("f_base", false);
   int target = dat_preferences.getInt("soil_target", 0);  
@@ -45,26 +55,41 @@ int DataManager::getSoilTarget() {
   return target;
 }
 
-// check for any setting updates
+
+/**
+ * Return the device name
+ *
+ * @return device name
+ */
+String DataManager::getName() {
+  dat_preferences.begin("f_base", false);
+  String name = dat_preferences.getString("name", "My device");  
+  dat_preferences.end();
+  return name;
+}
+
+
+/**
+ * Check for updated settings and set parameters to new values
+ *
+ * @return tue if settings were updated
+ */
 bool DataManager::checkForUpdates() {
   bool update = false;
-  // Update soil moisture target & record number
-  if (Firebase.RTDB.getBool(&fbdo, "/status/update")) {
+
+  Firebase.RTDB.getBool(&fbdo, "/status/update");
+  if (fbdo.to<bool>()) {
     update = true;
 
-    Firebase.Firestore.getDocument(&fbdo, FIREBASE_PROJECT_ID, "", "settings/esp32");
-    FirebaseJson result;
-    result.setJsonData(fbdo.payload());
-    FirebaseJsonData data;
+    // Read updated values
+    Firebase.RTDB.getInt(&fbdo, "/status/target");
+    uint8_t soil_target = fbdo.to<int>();
+    Firebase.RTDB.getString(&fbdo, "/status/name");
+    String name = fbdo.to<String>();
 
-    result.get(data, "fields/soil_target/integerValue");
-    uint8_t soil_target = data.to<int>();
-
-    result.get(data, "fields/rec_no/integerValue");
-    uint8_t rec_no = data.to<int>();
-
+    // Save to preferences
     dat_preferences.begin("f_base", false);
-    dat_preferences.putInt("rec_no", rec_no);
+    dat_preferences.putString("name", name);
     dat_preferences.putInt("soil_target", soil_target);
     dat_preferences.end();
 
@@ -73,30 +98,56 @@ bool DataManager::checkForUpdates() {
   return update;
 }
 
+
+/**
+ * Check firebase connection
+ *
+ * @return tue if connected to firebase
+ */
 bool DataManager::getFirebaseStatus() {
   return Firebase.ready();
 }
 
+
+/**
+ * Upload data to firestore
+ *
+ * @param soil_data avg soil moisture sensor reading
+ * @param uv_data avg uv light sensor reading
+ * @param timestamp epoch timestamp
+ */
 void DataManager::uploadData(int soil_data, int uv_data, String timestamp) {
+  // Get record number
   dat_preferences.begin("f_base", false);
   int rec_no = dat_preferences.getInt("rec_no", 0);
+
+  // Record setup
   FirebaseJson record;
   String documentPath = "data/rec" + String(rec_no);
 
+  // Set record values
   record.set("fields/soil/integerValue", soil_data);
   record.set("fields/uv/integerValue", uv_data);
   record.set("fields/timestamp/stringValue", timestamp);
 
+  // Upload data
   if (Firebase.Firestore.createDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), record.raw())) {
     Serial.println("uploaded");
     rec_no = rec_no + 1;
-    dat_preferences.putInt("rec_no", rec_no);
+    dat_preferences.putInt("rec_no", rec_no);  // Update record number
   } else {
     Serial.println(fbdo.errorReason());
   }
   dat_preferences.end();
 }
 
+
+/**
+ * Upload data to realtime database
+ *
+ * @param soil_data soil moisture sensor reading
+ * @param uv_data uv light sensor reading
+ */
 void DataManager::uploadLiveData(int soil_data, int uv_data) {
   Firebase.RTDB.setInt(&fbdo, "data/soil_moisture", soil_data);
   Firebase.RTDB.setInt(&fbdo, "data/uv_lvl", uv_data);
