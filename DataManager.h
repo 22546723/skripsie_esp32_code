@@ -18,9 +18,9 @@ class DataManager
         uint8_t connectToFirebase();
         void uploadData(int soil_data, int uv_data, String timestamp);
         bool getFirebaseStatus();
-        // void getSettings();
         bool checkForUpdates();
         int getSoilTarget();
+        String getName();
         void uploadLiveData(int soil_data, int uv_data);
     protected:
 
@@ -29,7 +29,6 @@ class DataManager
       FirebaseData fbdo;
       FirebaseAuth auth;
       FirebaseConfig config;
-      // int rec_no;
 };
 
 #endif // DATA_MANAGER_H
