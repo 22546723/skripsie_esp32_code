@@ -9,14 +9,12 @@
 #include "time.h"
 
 #define RGB_BRIGHTNESS 64
-#define MOISTURE_PIN 2
-#define UV_PIN 3
-
-// REMOVE
-#define SSID "Doofenshmirtz Evil Inc."
-#define PASSWORD "0768114612"
-// #define SSID "Gabrielle"
-// #define PASSWORD "Gabs2301"
+#define MOISTURE_PIN 0
+#define UV_PIN 1
+#define PUMP_PIN 11
+#define POWER_PIN 23
+#define WIFI_PIN 22
+#define FIREBASE_PIN 21
 
 
 ////////////////////////////////////////////////////////
@@ -86,10 +84,10 @@ void runWifi() {
 
   // Set wifi status LED
   if (wifi_error == 1) {
-    digitalWrite(22, HIGH);
+    digitalWrite(WIFI_PIN, HIGH);
   }
   else {
-    digitalWrite(22, LOW);
+    digitalWrite(WIFI_PIN, LOW);
   }
 }
 
@@ -104,10 +102,10 @@ void runFirebase() {
 
   // Set firebase status LED
   if (firebase_error == 1) {
-    digitalWrite(23, HIGH);
+    digitalWrite(FIREBASE_PIN, HIGH);
   }
   else {
-    digitalWrite(23, LOW);
+    digitalWrite(FIREBASE_PIN, LOW);
   }
 }
 
@@ -130,12 +128,12 @@ void setup() {
   board_name = dataManager.getName();
 
   // Set status LED pins
-  pinMode(21, OUTPUT); //working
-  pinMode(22, OUTPUT); //wifi connected
-  pinMode(23, OUTPUT); //firebase connected
+  pinMode(POWER_PIN, OUTPUT); //working
+  pinMode(WIFI_PIN, OUTPUT); //wifi connected
+  pinMode(FIREBASE_PIN, OUTPUT); //firebase connected
 
   // Set working status LED
-  digitalWrite(21, HIGH);
+  digitalWrite(POWER_PIN, HIGH);
 
   // ADC setup
   analogReadResolution(12);
