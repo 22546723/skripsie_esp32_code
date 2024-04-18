@@ -15,6 +15,9 @@
 #define POWER_PIN 23
 #define WIFI_PIN 22
 #define FIREBASE_PIN 21
+#define PUMP_T_MAX 1400 // us
+#define PUMP_T_MIN 500 // us
+#define PPM_PERIOD 20000 // us
 
 
 ////////////////////////////////////////////////////////
@@ -47,6 +50,18 @@ uint32_t log_timer_period = 60 * 1000000;  // triger log timer (1MHz) every 60 s
 volatile SemaphoreHandle_t logTimerSemaphore;
 portMUX_TYPE logTimerMux = portMUX_INITIALIZER_UNLOCKED;
 
+// Pump timer
+hw_timer_t* pump_timer = NULL;
+uint32_t pump_timer_period = 1; // triger pump timer (1MHz) every 1us
+volatile SemaphoreHandle_t pumpTimerSemaphore;
+portMUX_TYPE pumpTimerMux = portMUX_INITIALIZER_UNLOCKED;
+uint16_t current_pump_delay;
+ // = PUMP_T_MAX - (PUMP_T_MAX - PUMP_T_MIN)*pump_speed;
+float pump_speed = 0.6; // % of full speed
+bool pumpOn;
+uint8_t ppm_state = 0; // 0 - idle | 1 - pulse | 2 - fill
+
+int temp_count = 0;
 
 ////////////////////////////////////////////////////////
 /**
@@ -59,6 +74,44 @@ void IRAM_ATTR onLogTimer() {
   portENTER_CRITICAL_ISR(&logTimerMux);
   portEXIT_CRITICAL_ISR(&logTimerMux);
   xSemaphoreGiveFromISR(logTimerSemaphore, NULL);
+}
+
+// Pump timer interrupt
+void IRAM_ATTR onPumpTimer() {
+  uint16_t pump_delay;
+  uint8_t setTo;
+  uint16_t pulse_len = (PUMP_T_MAX - (PUMP_T_MAX - PUMP_T_MIN)*pump_speed);
+  // Serial.println("at pump interrupt");
+
+  portENTER_CRITICAL_ISR(&pumpTimerMux);
+
+  if (ppm_state == 0) {  // idle
+    setTo = LOW;
+    ppm_state = 1; //pulse
+  }
+
+  if (ppm_state == 1) { // pulse
+    setTo = HIGH;
+    ppm_state = 2; // set to fill
+    pump_delay = pulse_len; 
+  }
+  else if (ppm_state == 2) { // fill
+    // digitalWrite(PUMP_PIN, HIGH);
+    setTo = LOW;
+    ppm_state = 1; //set to pulse
+    pump_delay = PPM_PERIOD - pulse_len; // period - pulse
+  }
+
+  // restart timer alarm
+  timerAlarm(pump_timer, pump_delay, true, 0);
+  // if (pumpOn) {
+  //   timerAlarm(pump_timer, pump_delay, true, 0);
+  // }
+  
+
+  portEXIT_CRITICAL_ISR(&pumpTimerMux);
+  digitalWrite(PUMP_PIN, setTo);
+  // xSemaphoreGiveFromISR(pumpTimerSemaphore, NULL);
 }
 
 // Function that gets current epoch time
@@ -139,20 +192,44 @@ void setup() {
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
 
+  // Serial.println("s1");
+
+  // Pump setup
+  pinMode(PUMP_PIN, OUTPUT);
+  digitalWrite(PUMP_PIN, LOW);
+  current_pump_delay = 0;
+  pumpOn = false;
+
+  // Serial.println("s2");
+
+  // Pump timer setup
+  // pumpTimerSemaphore = xSemaphoreCreateBinary();
+  // Serial.println("s2.1");
+  pump_timer = timerBegin(1000000);  // 1MHz timer
+  // Serial.println("s2.2");
+  timerAttachInterrupt(pump_timer, &onPumpTimer);
+  // Serial.println("s2.3");
+  timerAlarm(pump_timer, PPM_PERIOD, true, 0);
+
+  // Serial.println("s3");
+
   // Log timer setup
   logTimerSemaphore = xSemaphoreCreateBinary();
   log_timer = timerBegin(1000000);  // 1MHz timer
   timerAttachInterrupt(log_timer, &onLogTimer);
   timerAlarm(log_timer, log_timer_period, true, 0);
 
+  // Serial.println("s4");
+
   // Bluetooth setup
   connectionManager.setupBluetooth(board_name);
 
-  Serial.println("setup done");
+  // Serial.println("setup done");
 
 }
 
 void loop() {
+  Serial.println("loop");
 
   /////////
   // BLUETOOTH
@@ -160,7 +237,6 @@ void loop() {
   connectionManager.sendWifiNetworks();
   connectionManager.setupWifi();
 
-  // Serial.println("here1");
 
   /////////
   // WIFI
@@ -169,7 +245,6 @@ void loop() {
     runWifi();
   }
 
-  // Serial.println("here2");
 
   /////////
   // FIREBASE
@@ -187,8 +262,6 @@ void loop() {
     connectionManager.setName(board_name);
   }
 
-  // Serial.println("here4");
-
 
   /////////
   // SENSOR DATA
@@ -203,7 +276,6 @@ void loop() {
   soil_lvl = 100.0 - (((soil_lvl - soil_moisture_range[0]) / (soil_moisture_range[1] - soil_moisture_range[0])) * 100.0);
   uv_lvl = ((uv_lvl - uv_range[0]) / (uv_range[1] - uv_range[0])) * 100;
 
-  // Serial.println("here5");
 
   // Log timer triggered
   if (xSemaphoreTake(logTimerSemaphore, 0) == pdTRUE) {
@@ -229,12 +301,48 @@ void loop() {
     }
   }
 
-  // Serial.println("here6");
-
 
   /////////
   // PUMP
   ////////  
+  // bool pump_temp = true;
+  // bool pump_stop = false;
+  // temp_count = temp_count + 1;
 
+  // if (pump_temp) { // replace with actual on condition (soil_lvl <= 0.9*soil_taget)
+  //   pumpOn = true;
+  //   // timerAlarm(pump_timer, PPM_PULSE_LEN, false, 0); // start PPM signal timer
+  // }
+
+  // if ((temp_count >= 5) && (pumpOn)) { // replace with actual on condition (soil_lvl >= 1.1*soil_taget)
+  //   pumpOn = false;
+  //   digitalWrite(PUMP_PIN, LOW);
+  // }
+
+
+  // if (xSemaphoreTake(pumpTimerSemaphore, 0) == pdTRUE) {
+  //   portENTER_CRITICAL(&pumpTimerMux);
+  //   portEXIT_CRITICAL(&pumpTimerMux);
+  //   Serial.println("here");
+
+  //   // End the current pulse if high
+  //   if (digitalRead(PUMP_PIN) == HIGH) {
+  //     digitalWrite(PUMP_PIN, LOW);
+  //   }
+
+  //   if (pumpOn) {
+  //     // Update current delay and calculate target delay
+  //     current_pump_delay = current_pump_delay + 1; 
+  //     uint16_t target_delay = PUMP_T_MAX - (PUMP_T_MAX - PUMP_T_MIN)*pump_speed;
+
+  //     // Start next pulse after delay
+  //     if (current_pump_delay >= target_delay) {
+  //       digitalWrite(PUMP_PIN, HIGH);
+  //       current_pump_delay = 0;
+  //     }
+  //   } else {
+  //     Serial.println("pump off");
+  //   }
+  // }
 
 }
