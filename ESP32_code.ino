@@ -1,3 +1,10 @@
+#include <FB_Const.h>
+#include <FB_Error.h>
+#include <FB_Network.h>
+#include <FB_Utils.h>
+#include <Firebase.h>
+#include <FirebaseFS.h>
+#include <Firebase_ESP_Client.h>
 #include <tuple>
 #include "DataLogger.h"
 #include <Arduino.h>
@@ -56,10 +63,10 @@ uint32_t pump_timer_period = 1; // triger pump timer (1MHz) every 1us
 volatile SemaphoreHandle_t pumpTimerSemaphore;
 portMUX_TYPE pumpTimerMux = portMUX_INITIALIZER_UNLOCKED;
 uint16_t current_pump_delay;
- // = PUMP_T_MAX - (PUMP_T_MAX - PUMP_T_MIN)*pump_speed;
-float pump_speed = 0.6; // % of full speed
+float pump_speed = 1; // % of full speed
 bool pumpOn;
-uint8_t ppm_state = 0; // 0 - idle | 1 - pulse | 2 - fill
+uint8_t ppm_state = 0; // 0 - idle | 1 - pulse | 2 - fill 
+
 
 int temp_count = 0;
 
@@ -69,19 +76,26 @@ int temp_count = 0;
 */
 ////////////////////////////////////////////////////////
 
-// Log timer interrupt
+
+/**
+ * Log timer interrupt
+ */
 void IRAM_ATTR onLogTimer() {
   portENTER_CRITICAL_ISR(&logTimerMux);
   portEXIT_CRITICAL_ISR(&logTimerMux);
   xSemaphoreGiveFromISR(logTimerSemaphore, NULL);
 }
 
-// Pump timer interrupt
+
+/**
+ * Pump timer interrupt.
+ *
+ * Manages the PPM signal that controls the pump.
+ */
 void IRAM_ATTR onPumpTimer() {
   uint16_t pump_delay;
   uint8_t setTo;
   uint16_t pulse_len = (PUMP_T_MAX - (PUMP_T_MAX - PUMP_T_MIN)*pump_speed);
-  // Serial.println("at pump interrupt");
 
   portENTER_CRITICAL_ISR(&pumpTimerMux);
 
@@ -96,37 +110,45 @@ void IRAM_ATTR onPumpTimer() {
     pump_delay = pulse_len; 
   }
   else if (ppm_state == 2) { // fill
-    // digitalWrite(PUMP_PIN, HIGH);
     setTo = LOW;
     ppm_state = 1; //set to pulse
     pump_delay = PPM_PERIOD - pulse_len; // period - pulse
   }
 
+
   // restart timer alarm
   timerAlarm(pump_timer, pump_delay, true, 0);
-  // if (pumpOn) {
-  //   timerAlarm(pump_timer, pump_delay, true, 0);
-  // }
   
-
   portEXIT_CRITICAL_ISR(&pumpTimerMux);
-  digitalWrite(PUMP_PIN, setTo);
-  // xSemaphoreGiveFromISR(pumpTimerSemaphore, NULL);
+
+  if (pumpOn) {
+    digitalWrite(PUMP_PIN, setTo);
+  }
 }
 
-// Function that gets current epoch time
+
+/**
+ * Determine the current epoch time
+ *
+ * @return Current epoch time
+ */
 unsigned long getTime() {
   time_t now;
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
-    //Serial.println("Failed to obtain time");
     return (0);
   }
   time(&now);
   return now;
 }
 
-// Connect to wifi if possible
+
+/**
+ * Attempt WiFi connection
+ *
+ * @see ConnectionManager::haveWifiConfig()
+ * @see ConnectionManager::connectToWifi()
+ */
 void runWifi() {
   uint8_t wifi_error = 0;
   
@@ -141,11 +163,16 @@ void runWifi() {
   }
   else {
     digitalWrite(WIFI_PIN, LOW);
+    
   }
 }
 
 
-// Connect to firebase 
+/**
+ * Attempt Firebase connection
+ *
+ * @see ConnectionManager::connectToFirebase()
+ */
 void runFirebase() {
   uint8_t firebase_error = dataManager.connectToFirebase();
 
@@ -173,26 +200,24 @@ void setup() {
   // General setup
   Serial.begin(115200);
   while (!Serial) delay(10);
-  Serial.println("test");
   digitalWrite(RGB_BUILTIN, HIGH);
   configTime(0, 0, ntpServer);
 
-  // Board name
+  // Board name and soil target
   board_name = dataManager.getName();
+  soil_target = dataManager.getSoilTarget();
 
   // Set status LED pins
-  pinMode(POWER_PIN, OUTPUT); //working
+  pinMode(POWER_PIN, OUTPUT); //power on
   pinMode(WIFI_PIN, OUTPUT); //wifi connected
   pinMode(FIREBASE_PIN, OUTPUT); //firebase connected
 
-  // Set working status LED
+  // Set power status LED
   digitalWrite(POWER_PIN, HIGH);
 
   // ADC setup
   analogReadResolution(12);
   analogSetAttenuation(ADC_11db);
-
-  // Serial.println("s1");
 
   // Pump setup
   pinMode(PUMP_PIN, OUTPUT);
@@ -200,18 +225,10 @@ void setup() {
   current_pump_delay = 0;
   pumpOn = false;
 
-  // Serial.println("s2");
-
   // Pump timer setup
-  // pumpTimerSemaphore = xSemaphoreCreateBinary();
-  // Serial.println("s2.1");
   pump_timer = timerBegin(1000000);  // 1MHz timer
-  // Serial.println("s2.2");
   timerAttachInterrupt(pump_timer, &onPumpTimer);
-  // Serial.println("s2.3");
   timerAlarm(pump_timer, PPM_PERIOD, true, 0);
-
-  // Serial.println("s3");
 
   // Log timer setup
   logTimerSemaphore = xSemaphoreCreateBinary();
@@ -219,50 +236,20 @@ void setup() {
   timerAttachInterrupt(log_timer, &onLogTimer);
   timerAlarm(log_timer, log_timer_period, true, 0);
 
-  // Serial.println("s4");
-
   // Bluetooth setup
   connectionManager.setupBluetooth(board_name);
+  
+  // WiFi setup
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
 
-  // Serial.println("setup done");
-
-}
-
-void loop() {
-  Serial.println("loop");
-
-  /////////
-  // BLUETOOTH
-  ////////
-  connectionManager.sendWifiNetworks();
-  connectionManager.setupWifi();
-
-
-  /////////
-  // WIFI
-  ////////
   if (!connectionManager.getConnectionStatus()) {
     runWifi();
   }
 
+}
 
-  /////////
-  // FIREBASE
-  ////////  
-  if ((!dataManager.getFirebaseStatus()) && connectionManager.getConnectionStatus()) {
-    runFirebase();
-  }
-
-  // Serial.println("here3");
-
-  // update soil target if needed
-  if (dataManager.checkForUpdates() && dataManager.getFirebaseStatus()) {
-    soil_target = dataManager.getSoilTarget();
-    board_name = dataManager.getName();
-    connectionManager.setName(board_name);
-  }
-
-
+void loop() {
   /////////
   // SENSOR DATA
   ////////  
@@ -275,6 +262,46 @@ void loop() {
   // Get sensor readings as percentages
   soil_lvl = 100.0 - (((soil_lvl - soil_moisture_range[0]) / (soil_moisture_range[1] - soil_moisture_range[0])) * 100.0);
   uv_lvl = ((uv_lvl - uv_range[0]) / (uv_range[1] - uv_range[0])) * 100;
+
+
+  /////////
+  // PUMP
+  ////////  
+  bool pump_temp = true;
+  bool pump_stop = false;
+  temp_count = temp_count + 1;
+
+  if ((soil_lvl <= 0.9*soil_target)) {
+    pumpOn = true;
+  }
+
+  if ((soil_lvl >= 1.1*soil_target) && (pumpOn)) { 
+    pumpOn = false;
+    digitalWrite(PUMP_PIN, LOW);
+  } 
+
+
+  /////////
+  // BLUETOOTH
+  ////////
+  connectionManager.sendWifiNetworks();
+  connectionManager.setupWifi();
+
+
+  /////////
+  // FIREBASE
+  ////////  
+  if ((!dataManager.getFirebaseStatus()) && connectionManager.getConnectionStatus()) {
+    runFirebase();
+  }
+
+
+  // update soil target if needed
+  if (dataManager.checkForUpdates() && dataManager.getFirebaseStatus()) {
+    soil_target = dataManager.getSoilTarget();
+    board_name = dataManager.getName();
+    connectionManager.setName(board_name);
+  }
 
 
   // Log timer triggered
@@ -291,58 +318,12 @@ void loop() {
     if (dataManager.getFirebaseStatus() && connectionManager.getConnectionStatus()) {
       // Upload live readings
       dataManager.uploadLiveData(soil_lvl, uv_lvl);
-      Serial.println("Uploading live sensor readings");    
 
       // Upload the average readings
       if (max_reached) {
         dataManager.uploadData(soil_avg, uv_avg, String(timestamp));
-        Serial.println("Upload to server");
       }
     }
   }
-
-
-  /////////
-  // PUMP
-  ////////  
-  // bool pump_temp = true;
-  // bool pump_stop = false;
-  // temp_count = temp_count + 1;
-
-  // if (pump_temp) { // replace with actual on condition (soil_lvl <= 0.9*soil_taget)
-  //   pumpOn = true;
-  //   // timerAlarm(pump_timer, PPM_PULSE_LEN, false, 0); // start PPM signal timer
-  // }
-
-  // if ((temp_count >= 5) && (pumpOn)) { // replace with actual on condition (soil_lvl >= 1.1*soil_taget)
-  //   pumpOn = false;
-  //   digitalWrite(PUMP_PIN, LOW);
-  // }
-
-
-  // if (xSemaphoreTake(pumpTimerSemaphore, 0) == pdTRUE) {
-  //   portENTER_CRITICAL(&pumpTimerMux);
-  //   portEXIT_CRITICAL(&pumpTimerMux);
-  //   Serial.println("here");
-
-  //   // End the current pulse if high
-  //   if (digitalRead(PUMP_PIN) == HIGH) {
-  //     digitalWrite(PUMP_PIN, LOW);
-  //   }
-
-  //   if (pumpOn) {
-  //     // Update current delay and calculate target delay
-  //     current_pump_delay = current_pump_delay + 1; 
-  //     uint16_t target_delay = PUMP_T_MAX - (PUMP_T_MAX - PUMP_T_MIN)*pump_speed;
-
-  //     // Start next pulse after delay
-  //     if (current_pump_delay >= target_delay) {
-  //       digitalWrite(PUMP_PIN, HIGH);
-  //       current_pump_delay = 0;
-  //     }
-  //   } else {
-  //     Serial.println("pump off");
-  //   }
-  // }
 
 }

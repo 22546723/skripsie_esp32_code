@@ -1,3 +1,4 @@
+#include <string>
 #include "HardwareSerial.h"
 #include "ConnectionManager.h"
 #include <Arduino.h>
@@ -39,7 +40,7 @@ void ConnectionManager::setupBluetooth(String board_name) {
 
   pCharacteristicScan = pServiceScan->createCharacteristic(
     CHARACTERISTIC_UUID_SCAN,
-    BLECharacteristic::PROPERTY_WRITE);
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
 
   pCharacteristicScanName = pServiceScan->createCharacteristic(
     CHARACTERISTIC_UUID_SCAN_NAME,
@@ -57,12 +58,20 @@ void ConnectionManager::setupBluetooth(String board_name) {
     CHARACTERISTIC_UUID_WIFI_NAME,
     BLECharacteristic::PROPERTY_WRITE);
 
+    pCharacteristicWifiName2 = pServiceSelect->createCharacteristic(
+    CHARACTERISTIC_UUID_WIFI_NAME_2,
+    BLECharacteristic::PROPERTY_WRITE);
+
   pCharacteristicWifiSet = pServiceSelect->createCharacteristic(
     CHARACTERISTIC_UUID_WIFI_SET,
     BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
 
   pCharacteristicWifiPassword = pServiceSelect->createCharacteristic(
     CHARACTERISTIC_UUID_WIFI_PASSWORD,
+    BLECharacteristic::PROPERTY_WRITE);  
+
+  pCharacteristicWifiPassword2 = pServiceSelect->createCharacteristic(
+    CHARACTERISTIC_UUID_WIFI_PASSWORD_2,
     BLECharacteristic::PROPERTY_WRITE);  
 
   pCharacteristicWifiConnected = pServiceSelect->createCharacteristic(
@@ -100,10 +109,13 @@ void ConnectionManager::setupBluetooth(String board_name) {
  * Scans for available networks and sends them one by one.
  */
 void ConnectionManager::sendWifiNetworks() {
+  
   String scan = pCharacteristicScan->getValue();
-  // Serial.println("at send wifi");
 
   if (scan == "1") {
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect();
+
     // Scan available networks
     int numNetworks = WiFi.scanNetworks();
     int sendCount = 0;
@@ -128,7 +140,7 @@ void ConnectionManager::sendWifiNetworks() {
 /**
  * Connect to wifi using the ssid and password saved in preferences
  *
- * @return connection result: 0 - no credentials | 1 - successful connecion | 2 - timeout
+ * @return connection result: 0 - no credentials | 1 - successful connecion | 2 - timeout | 3 - network not found
  */
 uint8_t ConnectionManager::connectToWifi() {
   con_preferences.begin("wifi_creds", false);
@@ -136,15 +148,37 @@ uint8_t ConnectionManager::connectToWifi() {
   String password = con_preferences.getString("password", "");
   con_preferences.end();
 
+
   // No ssid/password saved
   if (ssid == "" || password == "") {
     return 0;
   } else {
-    // Try to connect to WiFi with 5 sec timeout
+    // Try to connect to WiFi with 1 sec timeout
+
+    int numNetworks = WiFi.scanNetworks();
+
+    bool flag = false;
+    uint8_t count = 0;
+
+    // check if the saved network is available
+    while (!flag && (count < numNetworks)) {
+      if (WiFi.SSID(count) == ssid) {
+        flag = true;
+      }
+      count++;
+    }
+
+    if (!flag) {
+      Serial.println("Selected network not found");
+      return 3;
+    }
+
+
+    // attempt connection
     WiFi.begin(ssid.c_str(), password.c_str());
     uint8_t counter = 0;
-    while ((WiFi.status() != WL_CONNECTED) && (counter < 10)) {
-      delay(500);
+    while ((WiFi.status() != WL_CONNECTED) && (counter < 50)) {
+      delay(100);
       counter += 1;
     }
 
@@ -152,6 +186,7 @@ uint8_t ConnectionManager::connectToWifi() {
     if (WiFi.status() == WL_CONNECTED) {
       return 1;
     } else {
+      WiFi.disconnect();
       return 2;
     }
   }
@@ -168,8 +203,8 @@ bool ConnectionManager::setupWifi() {
 
   if (set == "1") {
     // Read ssid and password from BTLE and set them in preferences
-    String ssid = pCharacteristicWifiName->getValue();
-    String password = pCharacteristicWifiPassword->getValue();
+    String ssid = pCharacteristicWifiName->getValue() + pCharacteristicWifiName2->getValue();
+    String password = pCharacteristicWifiPassword->getValue() + pCharacteristicWifiPassword2->getValue();
     con_preferences.begin("wifi_creds", false);
     con_preferences.putString("ssid", ssid);
     con_preferences.putString("password", password);
@@ -177,9 +212,7 @@ bool ConnectionManager::setupWifi() {
 
     // Connect to wifi
     int connected = connectToWifi();
-    pCharacteristicWifiConnected->setValue(connected);
-
-    Serial.println(connected);
+    pCharacteristicWifiConnected->setValue(String(connected));
 
     pCharacteristicWifiSet->setValue("0");
 
@@ -234,81 +267,11 @@ void ConnectionManager::setName(String name) {
   pCharacteristicDeviceName->setValue(name);
 }
 
-
-
-///////////////////////////////////////////////////////////////
-
-
-
-// /**
-//  * Checks if device should scan for wifi networks
-//  *
-//  * @return true if device is connected to wifi, false if not
-//  */
-// bool ConnectionManager::checkBt() {
-//   String scan_flag = pCharacteristicScan->getValue();
-//   bool done = false;
-
-//   if (scan_flag == "1") {
-//     int n = WiFi.scanNetworks();
-
-//     for (int i = 0; i < n; i++) {
-//       pCharacteristicScan->setValue(WiFi.SSID(i));
-//       delay(10);  //Give the app enough time to read the network name
-//     }
-//   }
-// }
-
-// // Set wifi credentials
-// void ConnectionManager::setWifi(const char* wifi_ssid, const char* wifi_password) {
-//   con_preferences.begin("wifi_creds", false);
-//   con_preferences.putString("ssid", wifi_ssid);
-//   con_preferences.putString("password", wifi_password);
-//   con_preferences.end();
-// }
+void ConnectionManager::clearWifi() {
+  con_preferences.begin("wifi_creds", false);
+  con_preferences.clear();
+  con_preferences.end();
+}
 
 
 
-
-
-
-// // Get wifi name and password via bluetooth
-// bool ConnectionManager::getWifiInfo() {
-//   String wifi_set = pCharacteristicSet->getValue();
-//   bool done = false;
-
-//   if (wifi_set == "1") {
-//     // String name = pCharacteristicSelect->getValue();
-//     // String password = pCharacteristicPassword->getValue();
-//     setWifi(pCharacteristicSelect->getValue().c_str(), pCharacteristicPassword->getValue().c_str());
-//     done = true;
-//   }
-
-//   return done;
-// }
-
-// // Connect to wifi. 0 - no credentials | 1 - successfull connecion | 2 - timeout
-// uint8_t ConnectionManager::connectToWifi() {
-//   con_preferences.begin("wifi_creds", false);
-//   String ssid = con_preferences.getString("ssid", "");
-//   String password = con_preferences.getString("password", "");
-//   con_preferences.end();
-
-//   // No ssid/password saved
-//   if (ssid == "" || password == "") {
-//     return 0;
-//   } else {
-//     WiFi.begin(ssid.c_str(), password.c_str());
-//     uint8_t counter = 0;
-//     // Try to connect to WiFi
-//     while ((WiFi.status() != WL_CONNECTED) && (counter <= 10)) {
-//       delay(500);
-//     }
-
-//     if (WiFi.status() != WL_CONNECTED) {
-//       return 2;
-//     } else {
-//       return 1;
-//     }
-//   }
-// }

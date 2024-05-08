@@ -8,8 +8,6 @@
 //Provide the RTDB payload printing info and other helper functions.
 #include "addons/RTDBHelper.h"
 
-// #define FIREBASE_URL "https://skripsie-1e23a-default-rtdb.firebaseio.com/"
-// #define API_KEY ""
 
 DataManager::DataManager() {
   //init funct
@@ -82,8 +80,8 @@ bool DataManager::checkForUpdates() {
     update = true;
 
     // Read updated values
-    Firebase.RTDB.getInt(&fbdo, "/status/target");
-    uint8_t soil_target = fbdo.to<int>();
+    Firebase.RTDB.getDouble(&fbdo, "/status/soil_target");
+    double soil_target = fbdo.to<double>();
     Firebase.RTDB.getString(&fbdo, "/status/name");
     String name = fbdo.to<String>();
 
@@ -132,7 +130,6 @@ void DataManager::uploadData(int soil_data, int uv_data, String timestamp) {
 
   // Upload data
   if (Firebase.Firestore.createDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), record.raw())) {
-    Serial.println("uploaded");
     rec_no = rec_no + 1;
     dat_preferences.putInt("rec_no", rec_no);  // Update record number
   } else {
