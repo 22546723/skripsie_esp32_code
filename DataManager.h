@@ -20,7 +20,6 @@ class DataManager
         bool getFirebaseStatus();
         bool checkForUpdates();
         int getSoilTarget();
-        String getName();
         void uploadLiveData(int soil_data, int uv_data);
     protected:
 

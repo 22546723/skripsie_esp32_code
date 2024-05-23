@@ -7,16 +7,15 @@
 class DataLogger
 {
     public:
-        explicit DataLogger(uint8_t max_log);
-        void setMaxLogs(uint8_t max_log);
-        uint8_t getMaxLogs();
-        std::tuple<bool, uint8_t, uint8_t> logData(uint16_t data1, uint16_t data2);
+        explicit DataLogger(); 
+        void logData(uint16_t soil_data, uint16_t uv_data);
+        std::tuple<uint8_t, uint8_t> getData();
+        void resetLogger();
 
     protected:
 
     private:
-      uint8_t max_log_count;
-      uint8_t log_count;
+      uint32_t log_count;
       float data_total[2];
 };
 

@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <string>
 #include "HardwareSerial.h"
 #include "ConnectionManager.h"
@@ -8,11 +9,29 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 
+/**
+ * Callback that restarts the BLE advertising after an existing connection is disconnected
+ */
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+    };
 
+    void onDisconnect(BLEServer* pServer) {
+      if (BLEDevice::getAdvertising() != NULL) {
+        BLEDevice::startAdvertising();
+      }
+      
+    }
+};
 
+/**
+ * Class that manages the bluetooth and wifi connections
+ */
 ConnectionManager::ConnectionManager() {
   //init funct
 }
+
+
 
 /**
  * Setup the bluetooth LE connection 
@@ -22,16 +41,25 @@ ConnectionManager::ConnectionManager() {
  * @param board_name Name of the device that will be used to initialise the BTLE device. 
  *                   The device characteristic of the connected service will be set to this value
  */
-void ConnectionManager::setupBluetooth(String board_name) {
+void ConnectionManager::setupBluetooth() {
   // Initialize the bluetooth device and server
-  BLEDevice::init(board_name);
+  con_preferences.begin("wifi_creds", false);
+  String name = con_preferences.getString("name", "Plant Helper");
+  con_preferences.end();
+
+  BLEDevice::init(name);
   pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
   
   // Setup connected service
   pServiceConnect = pServer->createService(SERVICE_UUID_CONNECT);
 
   pCharacteristicDeviceName = pServiceConnect->createCharacteristic(
     CHARACTERISTIC_UUID_DEVICE,
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE);
+
+  pCharacteristicConnectedSsid = pServiceConnect->createCharacteristic(
+    CHARACTERISTIC_UUID_SSID,
     BLECharacteristic::PROPERTY_READ);
 
 
@@ -79,11 +107,11 @@ void ConnectionManager::setupBluetooth(String board_name) {
     BLECharacteristic::PROPERTY_READ);   
   
   // Set the board name
-  pCharacteristicDeviceName->setValue(board_name);
+  pCharacteristicDeviceName->setValue(name);
   pCharacteristicScanNew->setValue("0");
   pCharacteristicScan->setValue("0");
   pCharacteristicWifiSet->setValue("0");
-
+  pCharacteristicConnectedSsid->setValue("404");
 
 
   // Start the services
@@ -151,9 +179,10 @@ uint8_t ConnectionManager::connectToWifi() {
 
   // No ssid/password saved
   if (ssid == "" || password == "") {
+    pCharacteristicConnectedSsid->setValue("No WiFi network selected");
     return 0;
   } else {
-    // Try to connect to WiFi with 1 sec timeout
+    
 
     int numNetworks = WiFi.scanNetworks();
 
@@ -169,12 +198,12 @@ uint8_t ConnectionManager::connectToWifi() {
     }
 
     if (!flag) {
-      Serial.println("Selected network not found");
+      pCharacteristicConnectedSsid->setValue("WiFi network not found");
       return 3;
     }
 
 
-    // attempt connection
+    // Try to connect to WiFi with 5 sec timeout
     WiFi.begin(ssid.c_str(), password.c_str());
     uint8_t counter = 0;
     while ((WiFi.status() != WL_CONNECTED) && (counter < 50)) {
@@ -182,18 +211,21 @@ uint8_t ConnectionManager::connectToWifi() {
       counter += 1;
     }
 
+
     // Check if the connection was successful
     if (WiFi.status() == WL_CONNECTED) {
+      pCharacteristicConnectedSsid->setValue(ssid);
       return 1;
     } else {
       WiFi.disconnect();
+      pCharacteristicConnectedSsid->setValue("Connection unsuccessful");
       return 2;
     }
   }
 }
 
 /**
- * Read the ssid and password from BTLE, save to preferences and connect to wifi
+ * Read the ssid and password from BLE, save to preferences and connect to wifi
  *
  * @return true if conneted to wifi, false if not
  */
@@ -259,14 +291,19 @@ bool ConnectionManager::getConnectionStatus() {
 
 
 /**
- * Update the device name
- *
- * @param name device name
+ * Update the device name from the BLE characteristic
  */
-void ConnectionManager::setName(String name) {
-  pCharacteristicDeviceName->setValue(name);
+void ConnectionManager::updateName() {
+  String name = pCharacteristicDeviceName->getValue();
+  con_preferences.begin("wifi_creds", false);
+  con_preferences.putString("name", name);
+  con_preferences.end();
 }
 
+
+/**
+ * Clear the saved wifi preferences
+ */
 void ConnectionManager::clearWifi() {
   con_preferences.begin("wifi_creds", false);
   con_preferences.clear();
